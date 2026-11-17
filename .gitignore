@@ -49,6 +49,19 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
+# Project data (do not upload large datasets)
+data/
+*.zip
+*.xlsx
+*.xls
+*.csv
+
+# Tableau packaged workbooks (can be large)
+*.twbx
+
+# Mac system files
+.DS_Store
+
 # compiled code 
 src/*.o
 src/*.so
