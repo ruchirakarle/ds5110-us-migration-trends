@@ -1,4 +1,4 @@
-# scripts/clean_old_1995_1999.R
+# R/clean_old_1995_1999.R
 
 library(tidyverse)
 library(readxl)
@@ -38,7 +38,7 @@ for (i in seq_along(zip_names)) {
 }
 read_old_file <- function(path, type, year) {
   
-  raw <- read_excel(path, skip = 8, col_names = FALSE, col_types = "text")
+  raw <-suppressMessages (read_excel(path, skip = 8, col_names = FALSE, col_types = "text"))
   
   non_migrant_row <- which(
     str_detect(raw[[3]], "Non-Migrants")
@@ -62,7 +62,15 @@ read_old_file <- function(path, type, year) {
                          y2_state = 2,
                          y2_state_name = 3,
                          n1 = 4, n2 = 5, agi = 6) |>
-      mutate(y1_statefips = state_code)
+      mutate(
+        y1_statefips = state_code,
+        y2_statefips = if_else(
+          str_detect(coalesce(y2_state_name, ""),
+                     "Total Mig - US & For"),
+          "96",
+          y2_statefips
+        )
+      )
   }
   
   out |>
@@ -74,11 +82,9 @@ read_old_file <- function(path, type, year) {
     ) |>
     filter(
       str_detect(y1_statefips, "^[0-9]{2}$"),
-      str_detect(y2_statefips, "^[0-9]{2}$"),
-      !y1_statefips %in% c("96", "97", "98", "57"),
-      !y2_statefips %in% c("96", "97", "98", "57"),
-      y1_statefips != y2_statefips
-    ) |>
+      str_detect(y2_statefips, "^[0-9]{2}$")
+    )|>
+    
     mutate(
       suppressed = if_any(c(n1, n2, agi),
                           ~ str_to_lower(str_trim(.x)) %in% c("d", "-1")),
@@ -124,8 +130,51 @@ clean_year <- function(year, type) {
   map_dfr(files, ~ read_old_file(.x, type, year))
 }
 
-inflow  <- map_dfr(my_years, ~ clean_year(.x, "inflow"))
+inflow <- map_dfr(my_years, ~ clean_year(.x, "inflow"))
 outflow <- map_dfr(my_years, ~ clean_year(.x, "outflow"))
+
+inflow_us <- inflow |>
+  filter(y1_statefips %in% c("96", "97", "98")) |>
+  group_by(year, y1_statefips) |>
+  summarise(across(c(n1, n2, agi), sum), .groups = "drop") |>
+  mutate(
+    y2_statefips = "00",
+    y1_state = "US",
+    y1_state_name = case_when(
+      y1_statefips == "96" ~ "US Total Mig - US & For",
+      y1_statefips == "97" ~ "US Total Mig - US",
+      y1_statefips == "98" ~ "US Total Mig - Foreign"
+    ),
+    suppressed = FALSE
+  )
+
+
+outflow_us <- outflow |>
+  filter(y2_statefips %in% c("96", "97", "98")) |>
+  group_by(year, y2_statefips) |>
+  summarise(across(c(n1, n2, agi), sum), .groups = "drop") |>
+  mutate(
+    y1_statefips = "00",
+    y2_state = "US",
+    y2_state_name = case_when(
+      y2_statefips == "96" ~ "US Total Mig - US & For",
+      y2_statefips == "97" ~ "US Total Mig - US",
+      y2_statefips == "98" ~ "US Total Mig - Foreign"
+    ),
+    suppressed = FALSE
+  )
+
+
+inflow <- bind_rows(inflow_us, inflow) |>
+  select(y2_statefips, y1_statefips, y1_state,
+         y1_state_name, n1, n2, agi, year, suppressed) |>
+  arrange(year, as.integer(y2_statefips))
+
+outflow <- bind_rows(outflow_us, outflow) |>
+  select(y1_statefips, y2_statefips, y2_state,
+         y2_state_name, n1, n2, agi, year, suppressed) |>
+  arrange(year, as.integer(y1_statefips))
+
 
 
 count(inflow, year)
@@ -143,7 +192,7 @@ count(outflow, suppressed)
 out_inflow  <- "data/clean/state_inflow_1995_1999.csv"
 out_outflow <- "data/clean/state_outflow_1995_1999.csv"
 
-if (nrow(inflow) != 12738 || nrow(outflow) != 12738) {
+if (nrow(inflow) != 14028 || nrow(outflow) != 14028) {
   stop("Unexpected row counts. Check the cleaning results before saving.")
 }
 
